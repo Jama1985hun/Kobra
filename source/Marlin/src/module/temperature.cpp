@@ -373,6 +373,16 @@ volatile bool Temperature::raw_temps_ready = false;
   millis_t Temperature::next_auto_fan_check_ms = 0;
 #endif
 
+#if BOTH(FAN_SOFT_PWM, USE_CONTROLLER_FAN)
+  uint8_t Temperature::soft_pwm_controller_speed = FAN_OFF_PWM;
+#endif
+
+#if ENABLED(FAN_SOFT_PWM)
+  #define _INIT_FAN_PIN(P) _INIT_SOFT_FAN(P)
+#else
+  #define _INIT_FAN_PIN(P) do{ if (PWM_PIN(P)) SET_PWM(P); else _INIT_SOFT_FAN(P); }while(0)
+#endif
+	
 #if ENABLED(FAN_SOFT_PWM)
   uint8_t Temperature::soft_pwm_amount_fan[FAN_COUNT],
           Temperature::soft_pwm_count_fan[FAN_COUNT];
@@ -2541,19 +2551,17 @@ void Temperature::tick() {
   #if HAS_HEATED_CHAMBER
     static SoftPWM soft_pwm_chamber;
   #endif
-
+	
+  #if BOTH(FAN_SOFT_PWM, USE_CONTROLLER_FAN)
+    static SoftPWM soft_pwm_controller;
+  #endif
+	
   #define WRITE_FAN(n, v) WRITE(FAN##n##_PIN, (v) ^ FAN_INVERTING)
 
   #if DISABLED(SLOW_PWM_HEATERS)
 
-        #if HAS_HOTEND || HAS_HEATED_BED || HAS_HEATED_CHAMBER/* || #defined FAN_SOFT_PWM*/
-        constexpr uint8_t pwm_mask =
-        #if ENABLED(SOFT_PWM_DITHER)
-            _BV(SOFT_PWM_SCALE) - 1
-        #else
-            0
-        #endif
-        ;
+         #if ANY(HAS_HOTEND, HAS_HEATED_BED, HAS_HEATED_CHAMBER, HAS_COOLER, FAN_SOFT_PWM)
+      constexpr uint8_t pwm_mask = TERN0(SOFT_PWM_DITHER, _BV(SOFT_PWM_SCALE) - 1);
       #define _PWM_MOD(N,S,T) do{                           \
         const bool on = S.add(pwm_mask, T.soft_pwm_amount); \
         WRITE_HEATER_##N(on);                               \
@@ -2578,8 +2586,15 @@ void Temperature::tick() {
       #if HAS_HEATED_CHAMBER
         _PWM_MOD(CHAMBER,soft_pwm_chamber,temp_chamber);
       #endif
-
+			
+			
+			
       #if ENABLED(FAN_SOFT_PWM)
+			
+			 #if ENABLED(USE_CONTROLLER_FAN)
+          WRITE(CONTROLLER_FAN_PIN, soft_pwm_controller.add(pwm_mask, soft_pwm_controller_speed));
+        #endif
+				
         #define _FAN_PWM(N) do{                                     \
           uint8_t &spcf = soft_pwm_count_fan[N];                    \
           spcf = (spcf & pwm_mask) + (soft_pwm_amount_fan[N] >> 1); \
